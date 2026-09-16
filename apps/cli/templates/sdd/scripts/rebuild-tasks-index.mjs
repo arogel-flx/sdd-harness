@@ -77,8 +77,10 @@ const index = {
 const next = JSON.stringify(index, null, 2) + '\n';
 
 if (CHECK_ONLY) {
+  // Compare content, not line endings: a Windows checkout with core.autocrlf=true hands us CRLF
+  // and the index was reported stale on every run even when it was up to date.
   const current = existsSync(INDEX_PATH)
-    ? readFileSync(INDEX_PATH, 'utf8')
+    ? readFileSync(INDEX_PATH, 'utf8').replace(/\r\n/g, '\n')
     : '';
   if (current !== next) {
     console.error(

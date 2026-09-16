@@ -621,7 +621,9 @@ if (existsSync(join(SDD, 'tools.json'))) {
 // ---- Content catalog: schema + freshness vs filesystem (viewer depends on it) ----
 const catalogJson = validate('catalog.json', 'catalog.schema.json');
 if (catalogJson) {
-  const { buildCatalog } = await import(join(__dirname, 'rebuild-catalog.mjs'));
+  // A URL, not a path: Node's ESM loader rejects absolute Windows paths ("C:\..." is read as
+  // protocol "c:" — ERR_UNSUPPORTED_ESM_URL_SCHEME). On POSIX a bare path only worked by accident.
+  const { buildCatalog } = await import(new URL('./rebuild-catalog.mjs', import.meta.url));
   const expected = buildCatalog();
   for (const section of ['agents', 'skills', 'prompts', 'schemas', 'memory']) {
     const have = JSON.stringify(catalogJson[section] ?? []);

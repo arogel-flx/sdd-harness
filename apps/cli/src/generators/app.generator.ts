@@ -12,6 +12,13 @@ export interface AppSpec {
   type: string;
   /** Puerto declarado en harness.config.json (apps[].port). Baja al código, .env.example y README. */
   port?: number;
+  /**
+   * Directorio del código relativo a la raíz del repo (posix) cuando NO es `apps/<name>` —
+   * `configure sdd` sobre un repo existente con las apps en `src/<name>`, por ejemplo.
+   * El identificador lógico en los registros SDD sigue siendo `apps/<name>` (los schemas
+   * lo exigen); esto solo documenta dónde vive el código. Ausente = `apps/<name>`.
+   */
+  path?: string;
 }
 
 export const DEFAULT_APP_PORTS: Record<string, number> = {

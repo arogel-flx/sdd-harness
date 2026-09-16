@@ -1,17 +1,26 @@
 import { defineCommand } from 'citty';
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { logger } from '../../utils/logger.js';
 import { generateSDD } from '../../generators/sdd.generator.js';
 import type { WorkspaceOptions } from '../../generators/workspace.generator.js';
+import type { AppSpec } from '../../generators/app.generator.js';
 import { parseProfile } from '../../generators/sdd.generator.js';
+import {
+  describeApp,
+  detectAppType,
+  discoverNxApplications,
+  parseAppsFlag,
+} from './sdd-apps.js';
 
 /**
  * Modo "sdd-harness": instala (o reinstala) el sistema SDD portable en un
  * proyecto YA existente, sin tocar su código:
- * - Detecta la forma del repo: monorepo Nx (apps/) o standalone (código en raíz).
+ * - Detecta la forma del repo: monorepo Nx o standalone (código en raíz). En un monorepo
+ *   registra las apps de apps/ Y cualquier project.json con projectType "application" que
+ *   viva en otro lado (src/<name>, packages/<name>...); --apps name=path las declara a mano.
  * - Inyecta scripts sdd:* + setup:agents y ajv/ajv-formats en el package.json
  *   (lo crea mínimo si el repo no es Node — Java/Python puros).
  * - Absorbe AGENTS.md/CLAUDE.md preexistentes dentro de sdd/dual-harness antes
@@ -45,6 +54,11 @@ export const configureSddCommand = defineCommand({
       type: 'string',
       description:
         'Working profile written to sdd/global.json: team (full cycles, default) | solo (lite cycles, single actor)',
+    },
+    apps: {
+      type: 'string',
+      description:
+        'Applications to register, as name=path pairs separated by commas (e.g. api=src/api,web=src/web). Skips detection; the logical id stays apps/<name>',
     },
   },
   async run({ args }) {
@@ -111,30 +125,38 @@ export const configureSddCommand = defineCommand({
       process.exit(0);
     }
 
-    // Detección de forma: Nx monorepo (apps/) vs standalone (código en raíz)
+    // Forma del repo: monorepo (Nx, o --apps explícito) vs standalone (código en raíz).
+    // Explícito gana; si no, en un monorepo se descubren las apps de apps/ y los project.json
+    // de tipo application fuera de apps/; un monorepo sin ninguna app es un error, no un kit vacío.
     const isNxLayout =
       existsSync(resolve(cwd, 'nx.json')) || existsSync(resolve(cwd, 'apps'));
+    const isMonorepo = isNxLayout || Boolean(args.apps);
 
-    const apps: Array<{ name: string; type: string }> = [];
-    if (isNxLayout) {
-      const appsDir = resolve(cwd, 'apps');
-      if (existsSync(appsDir)) {
-        for (const d of readdirSync(appsDir, { withFileTypes: true })) {
-          if (!d.isDirectory()) continue;
-          apps.push({ name: d.name, type: detectAppType(resolve(appsDir, d.name)) });
-        }
+    let apps: AppSpec[] = [];
+    try {
+      if (args.apps) {
+        apps = parseAppsFlag(args.apps, cwd);
+      } else if (isNxLayout) {
+        apps = discoverNxApplications(cwd);
+      } else {
+        apps = [{ name: projectName as string, type: detectAppType(cwd) }];
       }
-    } else {
-      apps.push({
-        name: projectName as string,
-        type: detectAppType(cwd),
-      });
+    } catch (err) {
+      logger.error((err as Error).message);
+      process.exit(1);
+    }
+
+    if (isMonorepo && apps.length === 0) {
+      logger.error(
+        'nx.json found but no applications: nothing under apps/ and no project.json with projectType "application" elsewhere. Pass --apps name=path[,name=path] (e.g. --apps api=src/api,web=src/web).',
+      );
+      process.exit(1);
     }
 
     p.note(
       [
-        `${pc.bold('Layout:')} ${isNxLayout ? 'Nx monorepo' : 'standalone (repo = una app lógica)'}`,
-        `${pc.bold('Apps registradas:')} ${apps.map((a) => `${a.name} (${a.type})`).join(', ') || 'none'}`,
+        `${pc.bold('Layout:')} ${isMonorepo ? (isNxLayout ? 'Nx monorepo' : 'multi-app (--apps)') : 'standalone (repo = una app lógica)'}`,
+        `${pc.bold('Apps registradas:')} ${apps.map(describeApp).join(', ') || 'none'}`,
         `${pc.bold('package.json:')} ${pkg ? 'merge de scripts sdd:* + ajv' : 'se crea uno mínimo para el arnés'}`,
         `${pc.bold('AGENTS.md/CLAUDE.md previos:')} se absorben en sdd/dual-harness`,
         `${pc.bold('.claude/.github/.agents propios:')} se conservan; el kit se enlaza al lado y toda colisión queda como *.new`,
@@ -160,7 +182,7 @@ export const configureSddCommand = defineCommand({
 
     try {
       await generateSDD(cwd, opts, {
-        layout: isNxLayout ? 'nx' : 'standalone',
+        layout: isMonorepo ? 'nx' : 'standalone',
         mergePackageJson: true,
         absorbExistingHarness: true,
       });
@@ -192,14 +214,3 @@ export const configureSddCommand = defineCommand({
   },
 });
 
-/** Heurística mínima de tipo por marcadores del stack — solo informativa. */
-function detectAppType(dir: string): string {
-  if (existsSync(resolve(dir, 'pom.xml'))) return 'springboot';
-  if (existsSync(resolve(dir, 'build.gradle'))) return 'springboot';
-  if (existsSync(resolve(dir, 'pyproject.toml'))) return 'python';
-  if (existsSync(resolve(dir, 'next.config.js')) || existsSync(resolve(dir, 'next.config.ts')))
-    return 'nextjs';
-  if (existsSync(resolve(dir, 'nest-cli.json'))) return 'nestjs';
-  if (existsSync(resolve(dir, 'vite.config.ts'))) return 'react';
-  return 'app';
-}

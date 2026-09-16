@@ -5,6 +5,7 @@ import { exec } from '../utils/exec.js';
 import { logger } from '../utils/logger.js';
 import { writeManifest } from './kit-manifest.js';
 import type { WorkspaceOptions } from './workspace.generator.js';
+import type { AppSpec } from './app.generator.js';
 
 /**
  * Cómo se instala el kit según la forma del repo destino:
@@ -64,7 +65,7 @@ export async function generateSDD(
   await writeGlobalJson(root, opts, layout);
 
   for (const app of opts.apps) {
-    await createSubprojectContext(root, 'apps', app.name, app.type, layout);
+    await createSubprojectContext(root, 'apps', app.name, app.type, layout, app.path);
   }
   for (const lib of opts.libs) {
     await createSubprojectContext(root, 'libs', lib.name, lib.type, layout);
@@ -216,10 +217,7 @@ async function writeGlobalJson(
 ): Promise<void> {
   const apps: Record<string, string> = {};
   for (const app of opts.apps) {
-    apps[app.name] =
-      layout === 'standalone'
-        ? `. — ${app.type} (standalone: código en la raíz del repo)`
-        : `apps/${app.name} — ${app.type}`;
+    apps[app.name] = describeAppEntry(app, layout);
   }
 
   const libs: Record<string, string> = {};
@@ -250,21 +248,43 @@ async function writeGlobalJson(
   );
 }
 
+/**
+ * Valor de sdd/global.json → monorepo.apps[name]. Texto libre para el visor y las personas;
+ * el identificador lógico de los registros sigue siendo apps/<name> (los schemas lo exigen).
+ * Cuando el código no vive en apps/<name> se dice dónde vive, así nadie lo busca donde no está.
+ */
+export function describeAppEntry(
+  app: AppSpec,
+  layout: 'nx' | 'standalone',
+): string {
+  if (layout === 'standalone') {
+    return `. — ${app.type} (standalone: código en la raíz del repo)`;
+  }
+  const codePath = app.path ?? `apps/${app.name}`;
+  return codePath === `apps/${app.name}`
+    ? `apps/${app.name} — ${app.type}`
+    : `${codePath} — ${app.type} (código en ${codePath}; id lógico apps/${app.name})`;
+}
+
 async function createSubprojectContext(
   root: string,
   category: 'apps' | 'libs' | 'tools',
   name: string,
   type: string,
   layout: 'nx' | 'standalone',
+  codePath?: string,
 ): Promise<void> {
   const dir = resolve(root, 'sdd/context', category, name);
   await fs.ensureDir(resolve(dir, 'updates'));
   await fs.writeFile(resolve(dir, 'updates/.gitkeep'), '', 'utf-8');
 
+  const livesElsewhere = codePath && codePath !== `${category}/${name}`;
   const locationNote =
     layout === 'standalone'
       ? `> ⚠ **Repo standalone:** el código de esta app vive en la **raíz del repositorio**, no en \`${category}/${name}/\`. El identificador \`${category}/${name}\` es la convención con la que los registros SDD (global.json, specs, ciclos) refieren a este único subproyecto lógico.\n\n`
-      : '';
+      : livesElsewhere
+        ? `> ⚠ **Ubicación:** el código de este subproyecto vive en \`${codePath}/\`, no en \`${category}/${name}/\`. El identificador \`${category}/${name}\` es la convención con la que los registros SDD (global.json, specs, ciclos) refieren a él.\n\n`
+        : '';
 
   const constitutionPath = resolve(dir, 'constitution.md');
   if (!(await fs.pathExists(constitutionPath))) {

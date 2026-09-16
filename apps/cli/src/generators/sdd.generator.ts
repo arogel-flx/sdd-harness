@@ -84,7 +84,8 @@ export async function generateSDD(
     await absorbIntoDualHarness(root, file, content);
   }
 
-  runSetupAgents(root);
+  const linked = runSetupAgents(root);
+  await ensureRootHarnessFiles(root, linked);
 }
 
 /**
@@ -317,7 +318,8 @@ ${locationNote}- **Tipo:** ${type}
   }
 }
 
-function runSetupAgents(root: string): void {
+/** Runs setup-agents; returns false when the script could not run or exited non-zero. */
+function runSetupAgents(root: string): boolean {
   try {
     if (process.platform === 'win32') {
       exec(
@@ -327,9 +329,42 @@ function runSetupAgents(root: string): void {
     } else {
       exec('bash sdd/scripts/setup-agents.sh', { cwd: root });
     }
+    return true;
   } catch {
     logger.warn(
-      'Could not run setup-agents automatically. Run `pnpm setup:agents` in the workspace to create the .claude/.github/.agents/.gemini surfaces and root AGENTS.md/CLAUDE.md/GEMINI.md.',
+      'setup-agents did not finish. Run `pnpm setup:agents` in the workspace to create the .claude/.github/.agents/.gemini surfaces and link root AGENTS.md/CLAUDE.md/GEMINI.md.',
+    );
+    return false;
+  }
+}
+
+const ROOT_HARNESS_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
+
+/**
+ * readExistingHarnessFiles removes the real root AGENTS.md/CLAUDE.md/GEMINI.md after absorbing
+ * them, trusting setup-agents to put a link in their place. When the script fails (no symlink
+ * rights, a PowerShell error, a wrong root — v0.14.1 on Windows did exactly that and still
+ * printed success) the repo is left with no instruction files at all, and every AI harness
+ * goes blind. A real copy of sdd/dual-harness/<file> is worse than a link but far better than
+ * nothing; `pnpm setup:agents` turns it into a link later.
+ */
+export async function ensureRootHarnessFiles(
+  root: string,
+  linked: boolean,
+): Promise<void> {
+  for (const file of ROOT_HARNESS_FILES) {
+    const target = resolve(root, file);
+    // lstat, not pathExists: a link (even a dangling one) counts as "the script did its job".
+    const present = await fs.lstat(target).then(
+      () => true,
+      () => false,
+    );
+    if (present) continue;
+    const source = resolve(root, 'sdd/dual-harness', file);
+    if (!(await fs.pathExists(source))) continue;
+    await fs.copy(source, target);
+    logger.warn(
+      `${file}: ${linked ? 'setup-agents did not link it' : 'setup-agents failed'} — wrote a real copy from sdd/dual-harness/ instead. Run \`pnpm setup:agents\` to turn it into a link.`,
     );
   }
 }

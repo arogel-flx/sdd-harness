@@ -17,6 +17,9 @@ import type { WorkspaceOptions } from './workspace.generator.js';
 /** Perfil de trabajo del repo (sdd/global.json.profile). Ausente = team. */
 export type SddProfile = 'team' | 'solo';
 
+/** Los archivos de instrucciones de la raíz que el arnés dual enlaza a sdd/dual-harness/. */
+export const ROOT_HARNESS_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'] as const;
+
 export function parseProfile(raw: unknown): SddProfile | undefined {
   if (raw === undefined || raw === null || raw === '') return undefined;
   if (raw === 'team' || raw === 'solo') return raw;
@@ -83,6 +86,7 @@ export async function generateSDD(
   for (const [file, content] of previousHarness) {
     await absorbIntoDualHarness(root, file, content);
   }
+  await writeRootHarnessCopies(root);
 
   const linked = runSetupAgents(root);
   await ensureRootHarnessFiles(root, linked);
@@ -157,8 +161,13 @@ const ABSORBED_HEADING =
 
 /**
  * Qué instrucciones previas del repo hay que conservar dentro de sdd/dual-harness/:
- * - un AGENTS.md/CLAUDE.md/GEMINI.md REAL en la raíz (repo sin SDD) → se lee y se quita,
- *   setup-agents lo reemplaza por el symlink;
+ * - un AGENTS.md/CLAUDE.md/GEMINI.md REAL en la raíz (repo sin SDD) → se lee y se deja donde
+ *   está: después de absorberlo, writeRootHarnessCopies lo sobreescribe con el contenido final
+ *   del dual-harness y setup-agents lo reconoce como copia del kit y lo reemplaza por el link.
+ *   Hasta v0.14.1 se borraba acá, y cualquier fallo entre este punto y el link (un package.json
+ *   inválido, un EPERM, el propio setup-agents) dejaba el repo sin archivos de instrucciones;
+ * - una copia idéntica al dual-harness anterior (lo que dejó un link fallido) no es texto del
+ *   equipo: no se absorbe, o el kit se anidaría dentro de sí mismo en cada configure;
  * - lo que una instalación anterior ya había absorbido en sdd/dual-harness/<file> (la raíz
  *   es un symlink) → se rescata ANTES de que el reset borre sdd/. Hasta v0.11.0 un segundo
  *   `configure sdd` perdía ese texto sin aviso.
@@ -167,7 +176,7 @@ async function readExistingHarnessFiles(
   root: string,
 ): Promise<Map<string, string>> {
   const found = new Map<string, string>();
-  for (const file of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md']) {
+  for (const file of ROOT_HARNESS_FILES) {
     const parts: string[] = [];
 
     const previous = resolve(root, 'sdd/dual-harness', file);
@@ -184,14 +193,40 @@ async function readExistingHarnessFiles(
     if (await fs.pathExists(path)) {
       const stat = await fs.lstat(path);
       if (!stat.isSymbolicLink()) {
-        parts.push((await fs.readFile(path, 'utf-8')).trim());
-        await fs.remove(path);
+        const content = await fs.readFile(path, 'utf-8');
+        const previousContent = (await fs.pathExists(previous))
+          ? await fs.readFile(previous, 'utf-8')
+          : null;
+        if (!isKitCopy(content, previousContent)) parts.push(content.trim());
       }
     }
 
     if (parts.length) found.set(file, parts.join('\n\n'));
   }
   return found;
+}
+
+/** Mismo contenido salvo fines de línea: la copia que dejó un link fallido, no texto del equipo. */
+function isKitCopy(content: string, kitContent: string | null): boolean {
+  if (kitContent === null) return false;
+  const fold = (s: string) => s.replace(/\r\n/g, '\n').trim();
+  return fold(content) === fold(kitContent);
+}
+
+/**
+ * Los archivos de instrucciones de la raíz que siguen siendo reales (no links) pasan a ser una
+ * copia exacta de sdd/dual-harness/<file> ANTES de correr setup-agents. Así la raíz nunca queda
+ * vacía, y los dos scripts reconocen la copia como del kit y la reemplazan por el link.
+ */
+async function writeRootHarnessCopies(root: string): Promise<void> {
+  for (const file of ROOT_HARNESS_FILES) {
+    const target = resolve(root, file);
+    const stat = await fs.lstat(target).catch(() => null);
+    if (!stat || stat.isSymbolicLink()) continue;
+    const source = resolve(root, 'sdd/dual-harness', file);
+    if (!(await fs.pathExists(source))) continue;
+    await fs.copy(source, target, { overwrite: true });
+  }
 }
 
 async function absorbIntoDualHarness(
@@ -338,15 +373,12 @@ function runSetupAgents(root: string): boolean {
   }
 }
 
-const ROOT_HARNESS_FILES = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
-
 /**
- * readExistingHarnessFiles removes the real root AGENTS.md/CLAUDE.md/GEMINI.md after absorbing
- * them, trusting setup-agents to put a link in their place. When the script fails (no symlink
- * rights, a PowerShell error, a wrong root — v0.14.1 on Windows did exactly that and still
- * printed success) the repo is left with no instruction files at all, and every AI harness
- * goes blind. A real copy of sdd/dual-harness/<file> is worse than a link but far better than
- * nothing; `pnpm setup:agents` turns it into a link later.
+ * Después de setup-agents, cualquier archivo de instrucciones que falte en la raíz se repone
+ * como copia real de sdd/dual-harness/<file>: la raíz nunca queda sin instrucciones. El caso
+ * normal es que ya estén (writeRootHarnessCopies los deja antes de enlazar), así que esto cubre
+ * GEMINI.md cuando no existía y cualquier fallo del script; ambos instaladores reconocen la
+ * copia como del kit y la convierten en link en la próxima corrida.
  */
 export async function ensureRootHarnessFiles(
   root: string,

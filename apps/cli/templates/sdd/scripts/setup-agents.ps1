@@ -62,11 +62,24 @@ function Test-LinkPointsTo($item, $source) {
 }
 
 # Remove-Link TARGET - removes the junction/symlink/hardlink itself, never what it points to.
-# Remove-Item -Recurse follows a directory link in PowerShell 5.1 and deletes the target's files.
+# Remove-Item -Recurse follows a directory link in PowerShell 5.1 and deletes the target's files,
+# and Get-Item may resolve a dangling link and fail: read the attributes of the entry itself.
 function Remove-Link($target) {
-    $item = Get-Item -LiteralPath $target -Force
-    if ($item.PSIsContainer) { [System.IO.Directory]::Delete($item.FullName) }
-    else { [System.IO.File]::Delete($item.FullName) }
+    $attrs = [System.IO.File]::GetAttributes($target)
+    if ($attrs -band [System.IO.FileAttributes]::Directory) { [System.IO.Directory]::Delete($target) }
+    else { [System.IO.File]::Delete($target) }
+}
+
+# A real root file whose content equals the kit source is the kit's own copy (what `harness
+# configure sdd` writes while absorbing, or the fallback when linking failed last time), not the
+# team's: it becomes a link instead of being kept as "yours" + *.new forever. Line endings are
+# ignored so a copy Git converted to CRLF still matches.
+function Is-KitCopy($item, $source) {
+    if ($item.PSIsContainer -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { return $false }
+    if ($item.Length -gt 4MB) { return $false }
+    $a = [System.IO.File]::ReadAllText($item.FullName) -replace "`r`n", "`n"
+    $b = [System.IO.File]::ReadAllText($source) -replace "`r`n", "`n"
+    return ($a -eq $b)
 }
 
 # Write-New TARGET SOURCE LABEL — the kit version next to yours: a copy for files, a pointer
@@ -85,10 +98,18 @@ function Write-New {
 }
 
 # Relative path from the link's directory to its source, in Windows form (what mklink stores).
+# Computed on path segments - System.Uri reads '#' as a fragment and decodes '%20', so a repo
+# under C:\Projects\C#\ or a folder literally named 'a%20b' would get a broken target.
 function Get-RelativeTarget($target, $source) {
-    $fromDir = (Split-Path -Path $target -Parent).TrimEnd('\') + '\'
-    $rel = (New-Object System.Uri($fromDir)).MakeRelativeUri((New-Object System.Uri($source))).ToString()
-    return ([System.Uri]::UnescapeDataString($rel) -replace '/', '\')
+    $from = [System.IO.Path]::GetFullPath((Split-Path -Path $target -Parent)).TrimEnd('\').Split('\')
+    $to = [System.IO.Path]::GetFullPath($source).TrimEnd('\').Split('\')
+    $common = 0
+    while ($common -lt $from.Length -and $common -lt $to.Length -and ($from[$common] -ieq $to[$common])) { $common++ }
+    if ($common -eq 0) { return [System.IO.Path]::GetFullPath($source) }   # different drive: absolute
+    $up = @()
+    for ($i = $common; $i -lt $from.Length; $i++) { $up += '..' }
+    $down = @($to[$common..($to.Length - 1)])
+    return (($up + $down) -join '\')
 }
 
 # New-Link TARGET SOURCE
@@ -130,6 +151,10 @@ function Link-Item {
             [System.IO.File]::Delete($item.FullName)
             New-Link $target $source
             Write-Host "replaced degraded : $label (plain file left by a checkout without core.symlinks)"
+        } elseif (Is-KitCopy $item $source) {
+            [System.IO.File]::Delete($item.FullName)
+            New-Link $target $source
+            Write-Host "replaced copy     : $label (same content as the kit file)"
         } else {
             Write-New $target $source $label
         }
@@ -304,7 +329,9 @@ function ConvertTo-Hashtable($obj) {
         foreach ($p in $obj.PSObject.Properties) { $h[$p.Name] = ConvertTo-Hashtable $p.Value }
         return $h
     }
-    if ($obj -is [array]) { return @($obj | ForEach-Object { ConvertTo-Hashtable $_ }) }
+    # Unary comma: without it PowerShell unrolls the array on return - [] becomes $null and
+    # ["mcp"] becomes "mcp", and the merge below would write that back into the user's file.
+    if ($obj -is [array]) { return ,@($obj | ForEach-Object { ConvertTo-Hashtable $_ }) }
     return $obj
 }
 
@@ -345,8 +372,9 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
 # better than a repo with no instructions at all.
 foreach ($name in @("AGENTS.md", "CLAUDE.md", "GEMINI.md")) {
     $rootFile = Join-Path $root $name
-    if (-not (Test-Path -LiteralPath $rootFile)) {
-        Copy-Item -LiteralPath (Join-Path $dualHarnessDir $name) -Destination $rootFile
+    $sourceFile = Join-Path $dualHarnessDir $name
+    if (-not (Test-Path -LiteralPath $rootFile) -and (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+        Copy-Item -LiteralPath $sourceFile -Destination $rootFile
         Write-Host "! copied  file    : $name (could not link it - re-run pnpm setup:agents to try again)"
     }
 }

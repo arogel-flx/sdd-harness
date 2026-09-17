@@ -123,7 +123,9 @@ export function compareVersions(a, b) {
 export function readJsonFile(path) {
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    // A BOM here is a leftover from Set-Content -Encoding UTF8 on PowerShell 5.1 (older
+    // setup-agents.ps1 runs, before it started writing UTF-8 without BOM); JSON.parse rejects it.
+    return JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
   } catch {
     return null;
   }

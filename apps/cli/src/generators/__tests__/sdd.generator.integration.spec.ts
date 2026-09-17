@@ -339,6 +339,8 @@ describe.skipIf(process.platform === 'win32')(
       // Los originales ahora son symlinks al dual-harness
       expect(fs.lstatSync(resolve(root, 'AGENTS.md')).isSymbolicLink()).toBe(true);
       expect(fs.lstatSync(resolve(root, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+      // y GEMINI.md, que no existía, también quedó enlazado: la raíz nunca queda sin instrucciones
+      expect(fs.existsSync(resolve(root, 'GEMINI.md'))).toBe(true);
 
       // El contenido previo quedó absorbido, no perdido
       const agents = fs.readFileSync(

@@ -205,7 +205,8 @@ async function readExistingHarnessFiles(
         const previousContent = (await fs.pathExists(previous))
           ? await fs.readFile(previous, 'utf-8')
           : null;
-        if (!isKitCopy(content, previousContent)) parts.push(content.trim());
+        const own = teamContribution(content, previousContent);
+        if (own) parts.push(own);
       }
     }
 
@@ -215,10 +216,44 @@ async function readExistingHarnessFiles(
 }
 
 /** Mismo contenido salvo fines de línea: la copia que dejó un link fallido, no texto del equipo. */
-function isKitCopy(content: string, kitContent: string | null): boolean {
-  if (kitContent === null) return false;
-  const fold = (s: string) => s.replace(/\r\n/g, '\n').trim();
-  return fold(content) === fold(kitContent);
+const fold = (s: string) => s.replace(/\r\n/g, '\n').trim();
+
+/**
+ * Qué parte de un archivo de instrucciones de la raíz es realmente del equipo.
+ *
+ * La raíz puede tener, además de un archivo propio: la copia que dejó un link fallido (idéntica
+ * al dual-harness), esa copia con ediciones encima, o — en un checkout con core.symlinks=false —
+ * el symlink degradado, que es un archivo de texto con la ruta destino adentro. Absorber
+ * cualquiera de las tres como "instrucciones previas" mete el kit dentro de sí mismo.
+ *
+ * Devuelve null si no hay nada del equipo que conservar.
+ */
+export function teamContribution(
+  content: string,
+  kitContent: string | null,
+): string | null {
+  const own = fold(content);
+  if (!own) return null;
+
+  // Symlink degradado: una sola línea que apunta a sdd/ (lo que escribe Git sin core.symlinks).
+  if (/^(\.\.[/\\])*sdd[/\\][^\s]+$/.test(own)) return null;
+
+  if (kitContent === null) return own;
+  const kit = fold(kitContent);
+  if (own === kit) return null;
+
+  // La copia del kit editada: conservar sólo lo que se agregó después del contenido del kit,
+  // o después del encabezado de absorción si el texto previo ya estaba absorbido ahí.
+  if (own.startsWith(kit)) {
+    const tail = own.slice(kit.length).trim();
+    return tail || null;
+  }
+  const idx = own.indexOf(ABSORBED_HEADING);
+  if (idx !== -1) {
+    const tail = own.slice(idx + ABSORBED_HEADING.length).trim();
+    return tail || null;
+  }
+  return own;
 }
 
 /**

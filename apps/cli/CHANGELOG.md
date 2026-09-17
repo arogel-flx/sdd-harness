@@ -31,6 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **La absorción del arnés previo no reconocía dos formas del propio kit.** Una copia del
+  dual-harness con ediciones encima se absorbía entera (el kit anidado dentro de sí mismo bajo un
+  segundo encabezado), y en un checkout con `core.symlinks=false` el symlink degradado — un
+  archivo de texto con la ruta destino adentro — se absorbía como instrucciones del equipo.
+  `teamContribution()` ahora conserva sólo la cola posterior al contenido del kit (o al
+  encabezado de absorción) y descarta el link degradado.
+- **`configure sdd` en modo standalone registraba el nombre sin normalizar.** Un repo en un
+  directorio `Mi_Proyecto` sin `--name` quedaba con un id que `add spec` rechaza; ahora pasa por
+  la misma normalización que el resto y falla con un mensaje claro si no se puede derivar uno válido.
+- **Una carpeta `apps/` sola ya no cuenta como Nx.** Un monorepo pnpm o Turborepo con `apps/` y
+  sin `nx.json` recibía `.nxignore` y `monorepo.tool: "Nx"`. Nx lo determina sólo `nx.json`;
+  `apps/` sigue siendo señal de monorepo para el descubrimiento.
+- **`link_dir` en `setup-agents.sh` no tenía el "kept" de `link_item`**, así que los 5 symlinks de
+  directorio imprimían `refreshed` en cada corrida.
+
 - **`configure sdd` on Windows left the repo without `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` and
   printed success.** `setup-agents.ps1` resolved the repo root one level too high (`sdd/`), so
   every link landed inside `sdd/.claude`, `sdd/.github`… while the script ended in `done.`;

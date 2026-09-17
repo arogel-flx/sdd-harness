@@ -317,7 +317,9 @@ export const COMMANDS: Command[] = [
     usage: 'harness configure sdd --name <n> --description <d> [--profile team|solo] [--apps name=path,...]',
     summary: 'Installs (or resets) the SDD system on an existing project.',
     points: [
-      'Shape detection: Nx monorepo or standalone repo. In a monorepo it registers the apps under apps/ plus every project.json of type application elsewhere (src/<name>...); --apps name=path,... declares them by hand. With no app found it fails instead of installing an empty kit.',
+      'Shape detection: monorepo (apps/ or nx.json) or standalone repo. In a monorepo it registers the apps under apps/ plus every project.json of type application elsewhere (src/<name>...); --apps name=path,... declares them by hand. With no app found it fails instead of installing an empty kit.',
+      'Monorepo without Nx: a repo with apps/ (or --apps) but no nx.json is registered all the same, but gets no .nxignore and is not labelled Nx in global.json.',
+      'Subproject ids are normalised to what the registries accept: @acme/api → api, Api_Gateway → api-gateway, 2fa → app-2fa. Two apps mapping to the same id is an error.',
       'Automatic package.json merge + absorption of the previous harness.',
       'No prompts with --name and --description: an agent can run it.',
       '--profile team|solo: the same profile as in init — written to sdd/global.json → profile only when passed (absent = team, full cycles).',

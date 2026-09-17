@@ -30,6 +30,25 @@ const isLink = (path: string) => {
 
 const hasGit = spawnSync('git', ['--version'], { encoding: 'utf-8' }).status === 0;
 
+/**
+ * Si este runner puede crear symlinks (Modo de desarrollador o admin). El runner de GitHub
+ * no puede, y ahí el kit cae a junction/hardlink: los casos que miden la forma del link se
+ * saltean de forma VISIBLE en vez de pasar sin afirmar nada.
+ */
+function canCreateSymlinks(): boolean {
+  const probe = mkdtempSync(resolve(tmpdir(), 'harness-symlink-probe-'));
+  try {
+    fs.writeFileSync(resolve(probe, 'target.txt'), 'x');
+    fs.symlinkSync('target.txt', resolve(probe, 'link.txt'));
+    return lstatSync(resolve(probe, 'link.txt')).isSymbolicLink();
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+}
+const CAN_SYMLINK = canCreateSymlinks();
+
 const OPTS = {
   projectName: 'win-repo',
   description: 'Existing Windows repo.',
@@ -65,7 +84,16 @@ describe.skipIf(process.platform !== 'win32')('setup-agents.ps1 (integration, Wi
 
     for (const file of ROOT_FILES) {
       const stat = lstatSync(resolve(root, file));
-      expect(stat.isSymbolicLink() || stat.isFile(), `${file} exists`).toBe(true);
+      if (CAN_SYMLINK) {
+        expect(stat.isSymbolicLink(), `${file} debe ser symlink`).toBe(true);
+      } else {
+        // Sin symlinks el kit cae a hardlink: mismo inode que el archivo del dual-harness
+        // y nlink >= 2. "isFile()" sería verdadero para cualquier archivo y no probaría nada.
+        const source = lstatSync(resolve(root, 'sdd/dual-harness', file));
+        expect(stat.isFile(), `${file} debe existir`).toBe(true);
+        expect(stat.nlink, `${file} debe ser hardlink`).toBeGreaterThanOrEqual(2);
+        expect(stat.ino, `${file} debe compartir inode con el dual-harness`).toBe(source.ino);
+      }
       expect(await fs.pathExists(resolve(root, `${file}.new`)), `${file}.new`).toBe(false);
     }
     // el texto del equipo viajó: se lee a través del link (o de la copia)
@@ -122,8 +150,13 @@ describe.skipIf(process.platform !== 'win32')('setup-agents.ps1 (integration, Wi
     expect(result.stdout).toMatch(/replaced copy\s+: CLAUDE\.md/);
     expect(await fs.pathExists(`${target}.new`)).toBe(false);
     const stat = lstatSync(target);
-    // symlink con Modo de desarrollador; hardlink cuando el runner no puede crear symlinks
-    expect(stat.isSymbolicLink() || stat.isFile()).toBe(true);
+    if (CAN_SYMLINK) {
+      expect(stat.isSymbolicLink()).toBe(true);
+    } else {
+      const source = lstatSync(resolve(root, 'sdd/dual-harness/CLAUDE.md'));
+      expect(stat.nlink).toBeGreaterThanOrEqual(2);
+      expect(stat.ino).toBe(source.ino);
+    }
     expect(await fs.readFile(target, 'utf-8')).toBe(
       await fs.readFile(resolve(root, 'sdd/dual-harness/CLAUDE.md'), 'utf-8'),
     );
@@ -164,12 +197,18 @@ describe.skipIf(process.platform !== 'win32')('setup-agents.ps1 (integration, Wi
     expect(await fs.readFile(resolve(root, 'CLAUDE.md'), 'utf-8')).toBe(original);
   });
 
-  it.skipIf(!hasGit)('re-running setup:agents on a checkout Git already wired leaves git status clean', async () => {
+  it('re-correr setup:agents no vuelve a crear ningún link (también con hardlinks)', async () => {
     await generateSDD(root, OPTS, INSTALL);
-    if (!isLink(resolve(root, 'CLAUDE.md'))) {
-      // sin Modo de desarrollador no hay symlinks: el caso no aplica en este runner
-      return;
-    }
+    const result = runSetupAgents(root);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    // Este es el camino que corre el runner de CI, donde no hay symlinks.
+    expect(result.stdout).not.toMatch(/refreshed|replaced|created/);
+    expect(result.stdout).toMatch(/kept/);
+  });
+
+  it.skipIf(!hasGit || !CAN_SYMLINK)('re-running setup:agents on a checkout Git already wired leaves git status clean', async () => {
+    await generateSDD(root, OPTS, INSTALL);
+    expect(isLink(resolve(root, 'CLAUDE.md'))).toBe(true);
     const git = (...args: string[]) =>
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
         cwd: root,

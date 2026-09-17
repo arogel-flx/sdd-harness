@@ -71,6 +71,30 @@ describe('sdd.generator — apps cuyo código no vive en apps/<name>', () => {
     expect(global.monorepo.tool).toBe('Nx');
   });
 
+  it('un monorepo con apps/ pero sin nx.json no queda etiquetado como Nx', async () => {
+    // Seguimiento de la review: isNxLayout tomaba apps/ como señal de Nx, así que un repo
+    // pnpm o Turborepo recibía .nxignore y tool "Nx". Ahora Nx lo determina sólo nx.json.
+    await generateSDD(
+      root,
+      {
+        projectName: 'turbo-repo',
+        description: 'apps/ sin nx.json.',
+        packageScope: '@turbo-repo',
+        apps: [{ name: 'web', type: 'react', path: 'apps/web' }],
+        libs: [],
+        services: [],
+      },
+      { layout: 'nx', nx: false, mergePackageJson: true },
+    );
+
+    const global = await fs.readJSON(resolve(root, 'sdd/global.json'));
+    expect(global.monorepo.tool).toBe('none (multi-app repo)');
+    // el id lógico y el contexto son los de siempre
+    expect(global.monorepo.apps).toEqual({ web: 'apps/web — react' });
+    expect(await fs.pathExists(resolve(root, 'sdd/context/apps/web/constitution.md'))).toBe(true);
+    expect(await fs.pathExists(resolve(root, '.nxignore'))).toBe(false);
+  });
+
   it('--apps en un repo sin Nx: registros multi-app, pero ni .nxignore ni tool "Nx"', async () => {
     await generateSDD(
       root,

@@ -122,6 +122,12 @@ link_dir() {
   local target="$1" rel="$2" relitems="$3" abs="$4" label="$5"
   mkdir -p "$(dirname "$target")"
   if [ -L "$target" ]; then
+    # Igual que link_item: si ya apunta al kit, no tocarlo (cada re-creación imprimía
+    # "refreshed" para cada uno de los 5 symlinks de directorio, en cada corrida).
+    if [ "$(readlink "$target")" = "$rel" ]; then
+      echo "kept     symlink : $label (already points at the kit)"
+      return 0
+    fi
     ln -sfn "$rel" "$target"
     echo "refreshed symlink : $label"
   elif [ -d "$target" ]; then

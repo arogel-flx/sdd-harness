@@ -66,5 +66,32 @@ describe('sdd.generator — apps cuyo código no vive en apps/<name>', () => {
     expect(apiConstitution).toContain('vive en `src/api/`');
     const webConstitution = await fs.readFile(resolve(root, 'sdd/context/apps/web/constitution.md'), 'utf-8');
     expect(webConstitution).not.toContain('Ubicación');
+    // un repo Nx de verdad: .nxignore y tool Nx
+    expect(await fs.pathExists(resolve(root, '.nxignore'))).toBe(true);
+    expect(global.monorepo.tool).toBe('Nx');
+  });
+
+  it('--apps en un repo sin Nx: registros multi-app, pero ni .nxignore ni tool "Nx"', async () => {
+    await generateSDD(
+      root,
+      {
+        projectName: 'plain-multi',
+        description: 'Two apps, no Nx.',
+        packageScope: '@plain-multi',
+        apps: [
+          { name: 'api', type: 'springboot', path: 'services/api' },
+          { name: 'web', type: 'react', path: 'web' },
+        ],
+        libs: [],
+        services: [],
+      },
+      { layout: 'nx', nx: false, mergePackageJson: true },
+    );
+
+    const global = await fs.readJSON(resolve(root, 'sdd/global.json'));
+    expect(global.monorepo.tool).toBe('none (multi-app repo)');
+    expect(Object.keys(global.monorepo.apps)).toEqual(['api', 'web']);
+    expect(await fs.pathExists(resolve(root, '.nxignore'))).toBe(false);
+    expect(await fs.pathExists(resolve(root, 'sdd/context/apps/api/constitution.md'))).toBe(true);
   });
 });

@@ -5,10 +5,15 @@ import { tmpdir } from 'node:os';
 import fs from 'fs-extra';
 
 import {
+  SUBPROJECT_NAME_RE,
   describeApp,
   discoverNxApplications,
   parseAppsFlag,
+  toSubprojectName,
 } from '../configure/sdd-apps.js';
+
+// Lo que exigen los schemas del kit y `add spec` para cada subproyecto registrado.
+const SUBPROJECT_RE = /^(apps|libs|tools)\/[a-z][a-z0-9-]*$/;
 
 // F1 (2026-09-16): un repo con nx.json y las apps en src/<name>/project.json instalaba el kit
 // con monorepo.apps = {} y sin aviso. Ahora se descubren fuera de apps/ o se declaran con --apps.
@@ -80,8 +85,56 @@ describe('configure sdd: qué apps registra', () => {
     expect(() => parseAppsFlag('ghost=src/ghost', root)).toThrow(/not a directory/);
     expect(() => parseAppsFlag('up=../outside', root)).toThrow(/inside the repo/);
     expect(() => parseAppsFlag('me=.', root)).toThrow(/inside the repo/);
-    expect(() => parseAppsFlag('bad name=src/api', root)).toThrow(/not a valid app name/);
     expect(() => parseAppsFlag(' , ', root)).toThrow(/at least one/);
+  });
+
+  it('--apps exige el nombre ya válido para los registros y sugiere la forma normalizada', () => {
+    expect(() => parseAppsFlag('API=src/api', root)).toThrow(/not a valid subproject name.*try "api"/);
+    expect(() => parseAppsFlag('Api_Gateway=src/api', root)).toThrow(/try "api-gateway"/);
+    expect(() => parseAppsFlag('@acme/api=src/api', root)).toThrow(/try "api"/);
+    expect(() => parseAppsFlag('2fa=src/api', root)).toThrow(/try "app-2fa"/);
+    expect(() => parseAppsFlag('bad name=src/api', root)).toThrow(/try "bad-name"/);
+    // y lo que pasa, pasa los schemas
+    for (const app of parseAppsFlag('api=src/api,legacy-v2=apps/legacy', root)) {
+      expect(`apps/${app.name}`).toMatch(SUBPROJECT_RE);
+    }
+  });
+
+  it('toSubprojectName normaliza los nombres habituales de Nx al patrón del kit', () => {
+    expect(toSubprojectName('@acme/api')).toBe('api');
+    expect(toSubprojectName('Api_Gateway')).toBe('api-gateway');
+    expect(toSubprojectName('2fa')).toBe('app-2fa');
+    expect(toSubprojectName('  Shop.Web  ')).toBe('shop-web');
+    expect(toSubprojectName('--weird__name--')).toBe('weird-name');
+    expect(toSubprojectName('api')).toBe('api');
+    for (const raw of ['@acme/api', 'Api_Gateway', '2fa', 'Shop.Web']) {
+      expect(toSubprojectName(raw)).toMatch(SUBPROJECT_NAME_RE);
+    }
+  });
+
+  it('el descubrimiento normaliza project.name y falla si dos apps colisionan', async () => {
+    const ws = mkdtempSync(resolve(tmpdir(), 'harness-configure-names-'));
+    await fs.writeJSON(resolve(ws, 'nx.json'), {});
+    await fs.ensureDir(resolve(ws, 'apps/Api_Gateway'));
+    await fs.ensureDir(resolve(ws, 'packages/svc'));
+    await fs.writeJSON(resolve(ws, 'packages/svc/project.json'), { name: '@acme/svc', projectType: 'application' });
+    await fs.ensureDir(resolve(ws, 'src/two'));
+    await fs.writeJSON(resolve(ws, 'src/two/project.json'), { name: '2fa', projectType: 'application' });
+
+    const apps = discoverNxApplications(ws);
+    expect(apps.map((a) => [a.name, a.path])).toEqual([
+      ['api-gateway', 'apps/Api_Gateway'],
+      ['svc', 'packages/svc'],
+      ['app-2fa', 'src/two'],
+    ]);
+    for (const app of apps) expect(`apps/${app.name}`).toMatch(SUBPROJECT_RE);
+
+    // apps/api y @acme/api en otro lado -> mismo id lógico: error con los dos orígenes
+    await fs.ensureDir(resolve(ws, 'apps/api'));
+    await fs.ensureDir(resolve(ws, 'src/other'));
+    await fs.writeJSON(resolve(ws, 'src/other/project.json'), { name: '@acme/api', projectType: 'application' });
+    expect(() => discoverNxApplications(ws)).toThrow(/"@acme\/api" \(src\/other\) and "api" \(apps\/api\) both map to apps\/api/);
+    rmSync(ws, { recursive: true, force: true });
   });
 
   it('describeApp muestra el path solo cuando no es apps/<name>', () => {

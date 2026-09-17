@@ -125,9 +125,10 @@ export const configureSddCommand = defineCommand({
       process.exit(0);
     }
 
-    // Forma del repo: monorepo (Nx, o --apps explícito) vs standalone (código en raíz).
-    // Explícito gana; si no, en un monorepo se descubren las apps de apps/ y los project.json
-    // de tipo application fuera de apps/; un monorepo sin ninguna app es un error, no un kit vacío.
+    // Forma del repo: Nx (nx.json o apps/), multi-app sin Nx (--apps en un repo cualquiera) o
+    // standalone (código en raíz). Explícito gana; si no, en un monorepo se descubren las apps de
+    // apps/ y los project.json de tipo application fuera de apps/; un monorepo sin ninguna app es
+    // un error, no un kit vacío. Solo un repo Nx real recibe .nxignore y `tool: "Nx"`.
     const isNxLayout =
       existsSync(resolve(cwd, 'nx.json')) || existsSync(resolve(cwd, 'apps'));
     const isMonorepo = isNxLayout || Boolean(args.apps);
@@ -183,6 +184,7 @@ export const configureSddCommand = defineCommand({
     try {
       await generateSDD(cwd, opts, {
         layout: isMonorepo ? 'nx' : 'standalone',
+        nx: isNxLayout,
         mergePackageJson: true,
         absorbExistingHarness: true,
       });

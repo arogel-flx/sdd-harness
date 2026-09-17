@@ -14,7 +14,31 @@ import type { AppSpec } from '../../generators/app.generator.js';
  *   3. un monorepo sin ninguna app es un error, no un kit vacío (lo decide el comando).
  * El identificador lógico en los registros sigue siendo apps/<name> (los schemas lo exigen);
  * `path` solo documenta dónde vive el código.
+ *
+ * Los nombres tienen que cumplir lo que después exigen los schemas del kit y `add spec`
+ * (`^(apps|libs|tools)/[a-z][a-z0-9-]*$`). Un project.json de Nx suele llamarse `@acme/api`,
+ * `Api_Gateway` o `2fa`: el descubrimiento los normaliza y falla si dos colisionan; `--apps`
+ * exige el nombre ya válido y sugiere la forma normalizada.
  */
+
+/** Lo que aceptan los schemas para el <name> de apps/<name>. */
+export const SUBPROJECT_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * `@acme/api` -> `api`, `Api_Gateway` -> `api-gateway`, `2fa` -> `app-2fa`: sin scope npm, en
+ * minúsculas, cualquier otra corrida de caracteres pasa a `-`, y un dígito inicial se prefija.
+ */
+export function toSubprojectName(raw: string): string {
+  let name = raw
+    .trim()
+    .replace(/^@[^/]+\//, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (/^[0-9]/.test(name)) name = `app-${name}`;
+  return name;
+}
 
 /** Heurística mínima de tipo por marcadores del stack — solo informativa. */
 export function detectAppType(dir: string): string {
@@ -62,17 +86,29 @@ function readProjectJson(file: string): { name?: unknown; projectType?: unknown 
  * Orden: apps/ primero, después el resto en orden de recorrido; el nombre sale de project.json.
  */
 export function discoverNxApplications(cwd: string): AppSpec[] {
-  const found = new Map<string, AppSpec>();
+  const found = new Map<string, { spec: AppSpec; raw: string }>();
+  const register = (raw: string, type: string, path: string): void => {
+    const name = toSubprojectName(raw);
+    if (!SUBPROJECT_NAME_RE.test(name)) {
+      throw new Error(
+        `configure sdd: "${raw}" (${path}) cannot be turned into a valid subproject name (${SUBPROJECT_NAME_RE}). Rename it or pass --apps.`,
+      );
+    }
+    const previous = found.get(name);
+    if (previous) {
+      if (previous.spec.path === path) return;
+      throw new Error(
+        `configure sdd: "${raw}" (${path}) and "${previous.raw}" (${previous.spec.path}) both map to apps/${name}. Rename one, or pass --apps with distinct names.`,
+      );
+    }
+    found.set(name, { spec: { name, type, path }, raw });
+  };
 
   const appsDir = resolve(cwd, 'apps');
   if (existsSync(appsDir)) {
     for (const d of safeReaddir(appsDir)) {
       if (!d.isDirectory()) continue;
-      found.set(d.name, {
-        name: d.name,
-        type: detectAppType(resolve(appsDir, d.name)),
-        path: `apps/${d.name}`,
-      });
+      register(d.name, detectAppType(resolve(appsDir, d.name)), `apps/${d.name}`);
     }
   }
 
@@ -87,17 +123,11 @@ export function discoverNxApplications(cwd: string): AppSpec[] {
       if (existsSync(projectJson)) {
         const project = readProjectJson(projectJson);
         if (project?.projectType === 'application') {
-          const name =
+          const raw =
             typeof project.name === 'string' && project.name.trim()
               ? project.name.trim()
               : entry.name;
-          if (!found.has(name)) {
-            found.set(name, {
-              name,
-              type: detectAppType(full),
-              path: toPosix(relative(cwd, full)),
-            });
-          }
+          register(raw, detectAppType(full), toPosix(relative(cwd, full)));
         }
         continue;
       }
@@ -106,7 +136,7 @@ export function discoverNxApplications(cwd: string): AppSpec[] {
   };
   walk(cwd, 1);
 
-  return [...found.values()];
+  return [...found.values()].map((f) => f.spec);
 }
 
 function safeReaddir(dir: string) {
@@ -117,10 +147,9 @@ function safeReaddir(dir: string) {
   }
 }
 
-const APP_NAME = /^[a-z0-9][a-z0-9._-]*$/i;
-
 /**
- * `--apps name=path[,name=path]`: registro explícito, gana sobre la detección. El path es
+ * `--apps name=path[,name=path]`: registro explícito, gana sobre la detección. El nombre tiene
+ * que ser ya válido para los registros (se sugiere la forma normalizada si no lo es); el path es
  * relativo a la raíz del repo, tiene que existir y quedarse dentro del repo. Lanza Error con
  * un mensaje listo para mostrar; el comando decide cómo salir.
  */
@@ -140,8 +169,13 @@ export function parseAppsFlag(raw: string, cwd: string): AppSpec[] {
     }
     const name = item.slice(0, eq).trim();
     const rawPath = item.slice(eq + 1).trim();
-    if (!APP_NAME.test(name)) {
-      throw new Error(`--apps: "${name}" is not a valid app name (letters, digits, . _ -).`);
+    if (!SUBPROJECT_NAME_RE.test(name)) {
+      const suggestion = toSubprojectName(name);
+      throw new Error(
+        `--apps: "${name}" is not a valid subproject name — registries require ${SUBPROJECT_NAME_RE}${
+          suggestion ? ` (try "${suggestion}")` : ''
+        }.`,
+      );
     }
     if (apps.some((a) => a.name === name)) {
       throw new Error(`--apps: "${name}" is listed twice.`);

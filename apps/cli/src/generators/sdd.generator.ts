@@ -26,6 +26,12 @@ export function parseProfile(raw: unknown): SddProfile | undefined {
 
 export interface SDDInstallConfig {
   layout?: 'nx' | 'standalone';
+  /**
+   * Si el repo usa Nx de verdad (nx.json / apps/). Default: layout === 'nx'. Un repo multi-app
+   * sin Nx (`configure sdd --apps` sobre un repo cualquiera) usa layout 'nx' para los
+   * registros pero no recibe .nxignore ni `monorepo.tool: "Nx"`.
+   */
+  nx?: boolean;
   /** Inyecta scripts sdd:* + setup:agents y ajv/ajv-formats en el package.json (lo crea si falta). */
   mergePackageJson?: boolean;
   /** Absorbe AGENTS.md/CLAUDE.md/GEMINI.md preexistentes dentro de sdd/dual-harness antes de symlink-ear. */
@@ -46,6 +52,7 @@ export async function generateSDD(
   install: SDDInstallConfig = {},
 ): Promise<void> {
   const layout = install.layout ?? 'nx';
+  const usesNx = install.nx ?? layout === 'nx';
   const kitDir = resolve(getTemplatesDir(), 'sdd');
   const destDir = resolve(root, 'sdd');
 
@@ -62,7 +69,7 @@ export async function generateSDD(
   // "cambiado por el kit" en futuros updates.
   await writeManifest(destDir);
 
-  await writeGlobalJson(root, opts, layout);
+  await writeGlobalJson(root, opts, layout, usesNx);
 
   for (const app of opts.apps) {
     await createSubprojectContext(root, 'apps', app.name, app.type, layout, app.path);
@@ -71,7 +78,7 @@ export async function generateSDD(
     await createSubprojectContext(root, 'libs', lib.name, lib.type, layout);
   }
 
-  if (layout === 'nx') {
+  if (usesNx) {
     // sdd/templates trae blueprints con project.json; sin esto Nx los registra
     // como proyectos reales y CI explota por executors inexistentes.
     await fs.writeFile(resolve(root, '.nxignore'), 'sdd/templates\n', 'utf-8');
@@ -214,6 +221,7 @@ async function writeGlobalJson(
   root: string,
   opts: WorkspaceOptions,
   layout: 'nx' | 'standalone',
+  usesNx: boolean = layout === 'nx',
 ): Promise<void> {
   const apps: Record<string, string> = {};
   for (const app of opts.apps) {
@@ -238,7 +246,12 @@ async function writeGlobalJson(
       in_progress_modules: [],
       pending_modules: [],
       monorepo: {
-        tool: layout === 'standalone' ? 'none (standalone repo)' : 'Nx',
+        tool:
+          layout === 'standalone'
+            ? 'none (standalone repo)'
+            : usesNx
+              ? 'Nx'
+              : 'none (multi-app repo)',
         package_manager: 'pnpm',
         apps,
         libs,

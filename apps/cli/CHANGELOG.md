@@ -5,6 +5,23 @@ All notable changes to `@e-burgos/sdd-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`configure sdd` registers applications that live outside `apps/`.** `--apps name=path[,name=path]`
+  declares them (path relative to the repo root, must exist); without the flag an Nx repo now
+  registers every `apps/<dir>` **plus** every `project.json` with `projectType: "application"`
+  found elsewhere (`src/<name>`, `packages/<name>`…), skipping dependencies, build outputs, `sdd/`
+  and nested workspaces. A monorepo where no application can be found **fails instead of
+  installing an empty kit** (until now `monorepo.apps` was `{}`, `sdd:validate` stayed green and
+  the first `add spec` failed GATE B). The logical id stays `apps/<name>` — no schema change —
+  and `global.json` plus the generated `constitution.md` say where the code really lives.
+  Names are normalised to what the registries accept (`@acme/api` → `api`, `Api_Gateway` →
+  `api-gateway`, `2fa` → `app-2fa`), two apps mapping to the same id is an error, and `--apps`
+  requires the valid form (suggesting it otherwise). `--apps` on a repo without Nx registers a
+  multi-app repo without `.nxignore` or `monorepo.tool: "Nx"`.
+
 ## [0.14.1] - 2026-09-10
 
 ### Added

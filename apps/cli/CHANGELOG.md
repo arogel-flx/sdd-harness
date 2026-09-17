@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ConvertFrom-Json -AsHashtable` does not exist in PowerShell 5.1; the swallowed error left an
   empty hashtable and the merge wrote it back. Recursive conversion instead — arrays survive as
   arrays (`[]` stays `[]`, `["mcp"]` stays a list) — and an unparseable file is left untouched.
+- **`setup:agents` and `sdd:rtk` rewrote `.gemini/settings.json` on top of each other.**
+  PowerShell's `ConvertTo-Json` and Node's `JSON.stringify` format the same content differently,
+  so every other run reformatted the whole file: `git status` dirty after a no-op run, and a diff
+  nobody can review. `setup-agents` now leaves the file untouched when `context.fileName` already
+  lists `GEMINI.md` and `AGENTS.md`.
+- **Windows: `.gemini/settings.json` and the generated `.gemini/commands/*.toml` were written
+  with a BOM** (`Set-Content -Encoding UTF8` in PowerShell 5.1) and `setup-rtk.mjs` then read the
+  settings as invalid JSON, so the Gemini rtk hook was never added — silently, with
+  `.gemini/settings.json is not valid JSON` as the only trace. Both files are written as UTF-8
+  without BOM now, and `readJsonFile` tolerates a BOM left by an earlier run.
 - **Windows: links are removed without following them.** `Remove-Item -Recurse` on a directory
   link follows it in 5.1; the reparse point is now deleted by its attributes, which also works on
   dangling links. Relative targets are computed on path segments, not `System.Uri`, so `#` and

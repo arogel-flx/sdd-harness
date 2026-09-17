@@ -210,7 +210,8 @@ EOF
   echo "generated        : .gemini/commands/$stem.toml"
 done
 
-# .gemini/settings.json: make Gemini CLI also read AGENTS.md (merge, never clobber)
+# .gemini/settings.json: make Gemini CLI also read AGENTS.md (merge, never clobber, and do not
+# rewrite it when both names are already there — setup-rtk.mjs formats the same file its own way)
 if command -v node >/dev/null 2>&1; then
   node -e '
     const fs = require("fs");

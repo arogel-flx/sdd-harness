@@ -26,6 +26,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $root "sdd\agents"))) {
 $ErrorActionPreference = 'Stop'
 $script:Conflicts = @()
 
+# Set-Content -Encoding UTF8 writes a BOM in PowerShell 5.1, and Node's JSON.parse (setup-rtk.mjs
+# merges the rtk hook into .gemini/settings.json right after this script) rejects it as invalid
+# JSON. Everything this script generates is written as UTF-8 without BOM.
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Write-Utf8NoBom($path, $text) {
+    [System.IO.File]::WriteAllText($path, $text, $script:Utf8NoBom)
+}
+
 function Is-Link($item) {
     return ($item.LinkType -eq "Junction" -or $item.LinkType -eq "SymbolicLink" -or $item.LinkType -eq "HardLink")
 }
@@ -314,7 +322,7 @@ prompt = """
 {{args}}
 """
 "@
-    Set-Content -Path $target -Value $toml -Encoding UTF8
+    Write-Utf8NoBom $target $toml
     Write-Host "generated        : .gemini/commands/$stem.toml"
 }
 
@@ -352,10 +360,17 @@ if (-not $settingsReadable) {
     $current = $settings["context"]["fileName"]
     $names = @()
     if ($current -is [array]) { $names = @($current) } elseif ($current) { $names = @($current) }
-    foreach ($n in @("GEMINI.md", "AGENTS.md")) { if ($names -notcontains $n) { $names += $n } }
-    $settings["context"]["fileName"] = $names
-    $settings | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsPath -Encoding UTF8
-    Write-Host "merged           : .gemini/settings.json (context.fileName)"
+    $missing = @("GEMINI.md", "AGENTS.md") | Where-Object { $names -notcontains $_ }
+    if ($missing.Count -eq 0) {
+        # Nothing to add: leave the file byte-for-byte alone. ConvertTo-Json here and
+        # JSON.stringify in setup-rtk.mjs format the same content differently, so rewriting it
+        # on every run made each run dirty the file the other one had just written.
+        Write-Host "present          : .gemini/settings.json (context.fileName)"
+    } else {
+        $settings["context"]["fileName"] = @($names + $missing)
+        Write-Utf8NoBom $settingsPath (($settings | ConvertTo-Json -Depth 10) + "`n")
+        Write-Host "merged           : .gemini/settings.json (context.fileName)"
+    }
 }
 
 # rtk: pre-command hooks for Claude Code / Gemini CLI + the binary itself (best effort;

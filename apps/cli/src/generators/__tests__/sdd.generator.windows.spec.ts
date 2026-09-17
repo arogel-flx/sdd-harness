@@ -74,9 +74,17 @@ describe.skipIf(process.platform !== 'win32')('setup-agents.ps1 (integration, Wi
     expect(await fs.pathExists(resolve(root, 'sdd/.claude'))).toBe(false);
     expect(await fs.pathExists(resolve(root, '.claude/agents'))).toBe(true);
 
-    const merged = JSON.parse(
-      (await fs.readFile(resolve(root, '.gemini/settings.json'), 'utf-8')).replace(/^﻿/, ''),
+    // Sin BOM: setup-rtk.mjs (Node) tiene que poder parsearlo y sumar el hook de Gemini.
+    // Set-Content -Encoding UTF8 en PowerShell 5.1 escribía BOM y JSON.parse lo rechazaba.
+    const rawSettings = await fs.readFile(resolve(root, '.gemini/settings.json'), 'utf-8');
+    expect(rawSettings.charCodeAt(0), 'settings.json must not start with a BOM').not.toBe(0xfeff);
+    const merged = JSON.parse(rawSettings);
+    expect(merged.hooks?.BeforeTool, 'gemini rtk hook merged by setup-rtk').toBeDefined();
+    const toml = await fs.readFile(
+      resolve(root, '.gemini/commands/start-sdd-cycle.toml'),
+      'utf-8',
     );
+    expect(toml.charCodeAt(0), 'generated toml must not start with a BOM').not.toBe(0xfeff);
     expect(merged.theme).toBe('dark');
     expect(merged.exclude).toEqual([]);
     expect(merged.includeDirectories).toEqual(['packages']);

@@ -9,10 +9,12 @@ import type { WorkspaceOptions } from '../../generators/workspace.generator.js';
 import type { AppSpec } from '../../generators/app.generator.js';
 import { parseProfile } from '../../generators/sdd.generator.js';
 import {
+  SUBPROJECT_NAME_RE,
   describeApp,
   detectAppType,
   discoverNxApplications,
   parseAppsFlag,
+  toSubprojectName,
 } from './sdd-apps.js';
 
 /**
@@ -125,22 +127,34 @@ export const configureSddCommand = defineCommand({
       process.exit(0);
     }
 
-    // Forma del repo: Nx (nx.json o apps/), multi-app sin Nx (--apps en un repo cualquiera) o
-    // standalone (código en raíz). Explícito gana; si no, en un monorepo se descubren las apps de
-    // apps/ y los project.json de tipo application fuera de apps/; un monorepo sin ninguna app es
-    // un error, no un kit vacío. Solo un repo Nx real recibe .nxignore y `tool: "Nx"`.
-    const isNxLayout =
-      existsSync(resolve(cwd, 'nx.json')) || existsSync(resolve(cwd, 'apps'));
-    const isMonorepo = isNxLayout || Boolean(args.apps);
+    // Forma del repo: monorepo (una carpeta apps/, nx.json, o --apps explícito) vs standalone
+    // (código en la raíz). Explícito gana; si no, en un monorepo se descubren las apps de apps/ y
+    // los project.json de tipo application fuera de apps/; un monorepo sin ninguna app es un
+    // error, no un kit vacío.
+    //
+    // Nx es otra pregunta, y sólo la contesta nx.json: un monorepo pnpm o Turborepo con apps/ y
+    // sin nx.json no debe recibir .nxignore ni quedar etiquetado como Nx en global.json.
+    const usesNx = existsSync(resolve(cwd, 'nx.json'));
+    const isMonorepo =
+      usesNx || existsSync(resolve(cwd, 'apps')) || Boolean(args.apps);
 
     let apps: AppSpec[] = [];
     try {
       if (args.apps) {
         apps = parseAppsFlag(args.apps, cwd);
-      } else if (isNxLayout) {
+      } else if (isMonorepo) {
         apps = discoverNxApplications(cwd);
       } else {
-        apps = [{ name: projectName as string, type: detectAppType(cwd) }];
+        // El nombre del proyecto puede ser cualquier cosa (el default es el directorio:
+        // "Mi_Proyecto"), pero el id del subproyecto tiene que pasar los schemas y `add spec`.
+        const name = toSubprojectName(projectName as string);
+        if (!SUBPROJECT_NAME_RE.test(name)) {
+          logger.error(
+            `Cannot derive a valid subproject id from "${projectName}" — registries require ${SUBPROJECT_NAME_RE}. Pass --apps <name>=. instead.`,
+          );
+          process.exit(1);
+        }
+        apps = [{ name, type: detectAppType(cwd) }];
       }
     } catch (err) {
       logger.error((err as Error).message);
@@ -149,14 +163,14 @@ export const configureSddCommand = defineCommand({
 
     if (isMonorepo && apps.length === 0) {
       logger.error(
-        'nx.json found but no applications: nothing under apps/ and no project.json with projectType "application" elsewhere. Pass --apps name=path[,name=path] (e.g. --apps api=src/api,web=src/web).',
+        `${usesNx ? 'nx.json' : 'apps/'} found but no applications: nothing under apps/ and no project.json with projectType "application" elsewhere. Pass --apps name=path[,name=path] (e.g. --apps api=src/api,web=src/web).`,
       );
       process.exit(1);
     }
 
     p.note(
       [
-        `${pc.bold('Layout:')} ${isMonorepo ? (isNxLayout ? 'Nx monorepo' : 'multi-app (--apps)') : 'standalone (repo = una app lógica)'}`,
+        `${pc.bold('Layout:')} ${isMonorepo ? (usesNx ? 'Nx monorepo' : 'monorepo sin Nx') : 'standalone (repo = una app lógica)'}`,
         `${pc.bold('Apps registradas:')} ${apps.map(describeApp).join(', ') || 'none'}`,
         `${pc.bold('package.json:')} ${pkg ? 'merge de scripts sdd:* + ajv' : 'se crea uno mínimo para el arnés'}`,
         `${pc.bold('AGENTS.md/CLAUDE.md previos:')} se absorben en sdd/dual-harness`,
@@ -184,7 +198,7 @@ export const configureSddCommand = defineCommand({
     try {
       await generateSDD(cwd, opts, {
         layout: isMonorepo ? 'nx' : 'standalone',
-        nx: isNxLayout,
+        nx: usesNx,
         mergePackageJson: true,
         absorbExistingHarness: true,
       });

@@ -19,6 +19,11 @@ jobs:
       # checkout fails half-way. Symlinks are what the kit produces; Git creates them itself
       # when core.symlinks is on (the runner has no Developer Mode, so mklink falls back to
       # junctions/hardlinks inside the tests — that path is exercised too).
+      #
+      # core.autocrlf mirrors a stock Git for Windows install, so the repo's own sources are
+      # checked out CRLF. It does NOT give us a CRLF kit: templates/sdd ships its own
+      # .gitattributes with eol=lf. The CRLF-checkout behaviour of the kit is covered by
+      # update.generator.crlf.spec.ts, which converts a generated workspace itself.
       - name: Git settings for Windows
         if: runner.os == 'Windows'
         run: |

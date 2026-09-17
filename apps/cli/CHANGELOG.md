@@ -7,17 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
 ### Added
-
 
 - **A Windows-only integration spec** (`sdd.generator.windows.spec.ts`) runs `configure sdd`
   and `setup-agents.ps1` for real: settings shapes preserved, dangling links pruned, a kit copy
   turned into a link with no `.new`, a second configure that does not grow `dual-harness`, a
   path with `#` and a space, an invalid `package.json`, and — when the runner can create
   symlinks — a re-run that leaves `git status` clean.
-
 - **`configure sdd` registers applications that live outside `apps/`.** `--apps name=path[,name=path]`
   declares them (path relative to the repo root, must exist); without the flag an Nx repo now
   registers every `apps/<dir>` **plus** every `project.json` with `projectType: "application"`
@@ -30,10 +26,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `api-gateway`, `2fa` → `app-2fa`), two apps mapping to the same id is an error, and `--apps`
   requires the valid form (suggesting it otherwise). `--apps` on a repo without Nx registers a
   multi-app repo without `.nxignore` or `monorepo.tool: "Nx"`.
-
 - **CI runs on Windows too** (`.github/workflows/ci.yml`: `ubuntu-latest` + `windows-latest`,
   build + typecheck + full suite on every PR). Until now nothing executed the kit on Windows.
 
+### Fixed
+
+- **`configure sdd` on Windows left the repo without `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` and
+  printed success.** `setup-agents.ps1` resolved the repo root one level too high (`sdd/`), so
+  every link landed inside `sdd/.claude`, `sdd/.github`… while the script ended in `done.`;
+  the CLI had already removed the absorbed root files. The script now goes up two levels like
+  the `.sh`, refuses to run when `sdd\agents` is not under the resolved root, and stops on the
+  first error (`$ErrorActionPreference = 'Stop'`) so the CLI sees a non-zero exit.
+- **The root instruction files can no longer disappear, on any platform.** `configure sdd` does
+  not delete them any more: after absorbing their text into `sdd/dual-harness/` it overwrites
+  them with the resulting kit content, and both installers recognise a root file identical to
+  the kit's as the kit's own copy and turn it into a link (instead of keeping it as "yours" with
+  a `.new` next to it forever). A failure anywhere between absorbing and linking — an invalid
+  `package.json`, an EPERM, the script itself — leaves the original file in place; a second
+  `configure sdd` no longer absorbs the kit's own copy back into itself. If linking still fails,
+  the CLI copies whatever is missing and says so.
+- **Windows: links are created the way Git creates them.** Relative symlinks via `mklink`
+  (no admin rights once Developer Mode is on — PowerShell 5.1's `New-Item -ItemType
+  SymbolicLink` always demands elevation, so that branch never ran and every file ended up a
+  hardlink), junction/hardlink as fallback. A link that already resolves to the kit is kept, so
+  re-running `setup:agents` on a checkout Git already wired leaves `git status` clean; the
+  `.sh` got the same "kept" behaviour. A degraded symlink (a 26-byte plain file holding the
+  target, from a `core.symlinks=false` checkout) is recognised as the kit's and replaced.
+- **Windows: `.gemini/settings.json` was rewritten with nothing but `context.fileName`.**
+  `ConvertFrom-Json -AsHashtable` does not exist in PowerShell 5.1; the swallowed error left an
+  empty hashtable and the merge wrote it back. Recursive conversion instead — arrays survive as
+  arrays (`[]` stays `[]`, `["mcp"]` stays a list) — and an unparseable file is left untouched.
+- **Windows: links are removed without following them.** `Remove-Item -Recurse` on a directory
+  link follows it in 5.1; the reparse point is now deleted by its attributes, which also works on
+  dangling links. Relative targets are computed on path segments, not `System.Uri`, so `#` and
+  `%20` in a path no longer produce a broken link that reports success.
+- **`sdd:validate` did not start on Windows.** The only dynamic `import()` of the kit received a
+  raw `C:\…` path, which Node's ESM loader reads as protocol `c:`
+  (`ERR_UNSUPPORTED_ESM_URL_SCHEME`). It now imports by URL; POSIX is unchanged.
+- **Every Windows checkout with `core.autocrlf=true` (the Git for Windows default) read as
+  modified.** `rebuild-tasks-index --check` compared `sdd/tasks.json` byte for byte and reported
+  it stale on every run; the sha256 hashes of `sdd/kit.json` — used by `update sdd` to tell your
+  edits from the kit's, and by the validator to skip pristine files in the portability check —
+  did the same, so `update sdd` dropped a `.new` next to files nobody touched. Line endings are
+  now folded before comparing and hashing (text files only), and the kit ships
+  `sdd/.gitattributes` (`* text=auto eol=lf`) so the registries stay LF on every OS.
+  **Existing clones**: the attributes apply to new checkouts; run `git add --renormalize sdd/`
+  once (and commit) so the files already on disk match. Nothing breaks if you don't — the
+  normalised hashes cover it — but the working copy stays CRLF until you do.
+- **`sdd/kit.json` written on Windows had backslashes in its keys** (`agents\\sdd-planner.agent.md`),
+  so a kit installed on Windows and updated on Linux — or the other way round — matched no file
+  at all: `update sdd` treated the whole kit as new, hybrids lost their protection and the
+  legacy-mode fallback replaced customised files. Keys are always posix now. This is also what
+  made 7 tests of `update.generator.spec.ts` fail on Windows.
 
 ## [0.14.1] - 2026-09-10
 

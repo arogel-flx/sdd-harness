@@ -169,7 +169,21 @@ export async function readManifest(sddDir: string): Promise<KitManifest | null> 
   if (!(await fs.pathExists(path))) return null;
   try {
     const manifest = await fs.readJSON(path);
-    return manifest?.files ? manifest : null;
+    if (!manifest?.files) return null;
+    // A kit.json written on Windows by <= v0.14.1 has backslash keys
+    // (`agents\\sdd-planner.agent.md`). The keys computed from the kit are posix, so without
+    // this every lookup missed: the update marked each changed file as a conflict, and the
+    // stale sweep — which walks the OLD keys and deletes what still matches its hash — removed
+    // live agents, skills and scripts, reported as removedStale.
+    return {
+      ...manifest,
+      files: Object.fromEntries(
+        Object.entries(manifest.files as Record<string, string>).map(([key, hash]) => [
+          toKitPath(key),
+          hash,
+        ]),
+      ),
+    };
   } catch {
     return null;
   }

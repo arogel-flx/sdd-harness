@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: build · typecheck · test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # The java-api blueprint has 138-character paths: without core.longpaths the Windows
+      # checkout fails half-way. Symlinks are what the kit produces; Git creates them itself
+      # when core.symlinks is on (the runner has no Developer Mode, so mklink falls back to
+      # junctions/hardlinks inside the tests — that path is exercised too).
+      #
+      # core.autocrlf mirrors a stock Git for Windows install, so the repo's own sources are
+      # checked out CRLF. It does NOT give us a CRLF kit: templates/sdd ships its own
+      # .gitattributes with eol=lf. The CRLF-checkout behaviour of the kit is covered by
+      # update.generator.crlf.spec.ts, which converts a generated workspace itself.
+      - name: Git settings for Windows
+        if: runner.os == 'Windows'
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf true
+        shell: bash
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+        env:
+          SDD_RTK_SKIP_INSTALL: '1'

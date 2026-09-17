@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A Windows-only integration spec** (`sdd.generator.windows.spec.ts`) runs `configure sdd`
+  and `setup-agents.ps1` for real: settings shapes preserved, dangling links pruned, a kit copy
+  turned into a link with no `.new`, a second configure that does not grow `dual-harness`, a
+  path with `#` and a space, an invalid `package.json`, and — when the runner can create
+  symlinks — a re-run that leaves `git status` clean.
+- **`configure sdd` registers applications that live outside `apps/`.** `--apps name=path[,name=path]`
+  declares them (path relative to the repo root, must exist); without the flag an Nx repo now
+  registers every `apps/<dir>` **plus** every `project.json` with `projectType: "application"`
+  found elsewhere (`src/<name>`, `packages/<name>`…), skipping dependencies, build outputs, `sdd/`
+  and nested workspaces. A monorepo where no application can be found **fails instead of
+  installing an empty kit** (until now `monorepo.apps` was `{}`, `sdd:validate` stayed green and
+  the first `add spec` failed GATE B). The logical id stays `apps/<name>` — no schema change —
+  and `global.json` plus the generated `constitution.md` say where the code really lives.
+  Names are normalised to what the registries accept (`@acme/api` → `api`, `Api_Gateway` →
+  `api-gateway`, `2fa` → `app-2fa`), two apps mapping to the same id is an error, and `--apps`
+  requires the valid form (suggesting it otherwise). `--apps` on a repo without Nx registers a
+  multi-app repo without `.nxignore` or `monorepo.tool: "Nx"`.
+- **CI runs on Windows too** (`.github/workflows/ci.yml`: `ubuntu-latest` + `windows-latest`,
+  build + typecheck + full suite on every PR). Until now nothing executed the kit on Windows.
+
 ### Fixed
 
 - **`configure sdd` on Windows left the repo without `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` and
@@ -38,27 +60,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   link follows it in 5.1; the reparse point is now deleted by its attributes, which also works on
   dangling links. Relative targets are computed on path segments, not `System.Uri`, so `#` and
   `%20` in a path no longer produce a broken link that reports success.
-
-### Added
-
-- **A Windows-only integration spec** (`sdd.generator.windows.spec.ts`) runs `configure sdd`
-  and `setup-agents.ps1` for real: settings shapes preserved, dangling links pruned, a kit copy
-  turned into a link with no `.new`, a second configure that does not grow `dual-harness`, a
-  path with `#` and a space, an invalid `package.json`, and — when the runner can create
-  symlinks — a re-run that leaves `git status` clean.
-
-- **`configure sdd` registers applications that live outside `apps/`.** `--apps name=path[,name=path]`
-  declares them (path relative to the repo root, must exist); without the flag an Nx repo now
-  registers every `apps/<dir>` **plus** every `project.json` with `projectType: "application"`
-  found elsewhere (`src/<name>`, `packages/<name>`…), skipping dependencies, build outputs, `sdd/`
-  and nested workspaces. A monorepo where no application can be found **fails instead of
-  installing an empty kit** (until now `monorepo.apps` was `{}`, `sdd:validate` stayed green and
-  the first `add spec` failed GATE B). The logical id stays `apps/<name>` — no schema change —
-  and `global.json` plus the generated `constitution.md` say where the code really lives.
-  Names are normalised to what the registries accept (`@acme/api` → `api`, `Api_Gateway` →
-  `api-gateway`, `2fa` → `app-2fa`), two apps mapping to the same id is an error, and `--apps`
-  requires the valid form (suggesting it otherwise). `--apps` on a repo without Nx registers a
-  multi-app repo without `.nxignore` or `monorepo.tool: "Nx"`.
+- **`sdd:validate` did not start on Windows.** The only dynamic `import()` of the kit received a
+  raw `C:\…` path, which Node's ESM loader reads as protocol `c:`
+  (`ERR_UNSUPPORTED_ESM_URL_SCHEME`). It now imports by URL; POSIX is unchanged.
+- **Every Windows checkout with `core.autocrlf=true` (the Git for Windows default) read as
+  modified.** `rebuild-tasks-index --check` compared `sdd/tasks.json` byte for byte and reported
+  it stale on every run; the sha256 hashes of `sdd/kit.json` — used by `update sdd` to tell your
+  edits from the kit's, and by the validator to skip pristine files in the portability check —
+  did the same, so `update sdd` dropped a `.new` next to files nobody touched. Line endings are
+  now folded before comparing and hashing (text files only), and the kit ships
+  `sdd/.gitattributes` (`* text=auto eol=lf`) so the registries stay LF on every OS.
+  **Existing clones**: the attributes apply to new checkouts; run `git add --renormalize sdd/`
+  once (and commit) so the files already on disk match. Nothing breaks if you don't — the
+  normalised hashes cover it — but the working copy stays CRLF until you do.
+- **`sdd/kit.json` written on Windows had backslashes in its keys** (`agents\\sdd-planner.agent.md`),
+  so a kit installed on Windows and updated on Linux — or the other way round — matched no file
+  at all: `update sdd` treated the whole kit as new, hybrids lost their protection and the
+  legacy-mode fallback replaced customised files. Keys are always posix now. This is also what
+  made 7 tests of `update.generator.spec.ts` fail on Windows.
 
 ## [0.14.1] - 2026-09-10
 

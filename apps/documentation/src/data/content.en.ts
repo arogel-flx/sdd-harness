@@ -314,10 +314,10 @@ export const COMMANDS: Command[] = [
   },
   {
     name: 'configure sdd',
-    usage: 'harness configure sdd --name <n> --description <d> [--profile team|solo]',
+    usage: 'harness configure sdd --name <n> --description <d> [--profile team|solo] [--apps name=path,...]',
     summary: 'Installs (or resets) the SDD system on an existing project.',
     points: [
-      'Shape detection: Nx monorepo or standalone repo.',
+      'Shape detection: Nx monorepo or standalone repo. In a monorepo it registers the apps under apps/ plus every project.json of type application elsewhere (src/<name>...); --apps name=path,... declares them by hand. With no app found it fails instead of installing an empty kit.',
       'Automatic package.json merge + absorption of the previous harness.',
       'No prompts with --name and --description: an agent can run it.',
       '--profile team|solo: the same profile as in init — written to sdd/global.json → profile only when passed (absent = team, full cycles).',

@@ -104,7 +104,7 @@ $ npx @e-burgos/sdd-harness init
 > | `add spec`          | `<slug> --author <user> --title <text> --app apps/<name> [--apps <a,b>] [--depends-on <id|slug>]` |
 > | `add skill`         | `<name> --description <text>`                                                     |
 > | `add service`       | `<type>`                                                                          |
-> | `configure sdd`     | `--name <project> --description <text> [--profile team\|solo]` (plus `-y` only to reset an existing kit) |
+> | `configure sdd`     | `--name <project> --description <text> [--profile team\|solo] [--apps name=path,...]` (plus `-y` only to reset an existing kit) |
 > | `configure docker`  | `--services postgres,redis`                                                       |
 > | `configure mcp`     | `--servers <a,b>`                                                                 |
 > | `configure memory`  | `--providers <a,b>`                                                               |
@@ -497,7 +497,7 @@ Presents a multi-select with all 4 services, pre-selecting any already configure
 Configure or reset the SDD (Spec-Driven Development) agent infrastructure.
 
 ```bash
-harness configure sdd [--name <project>] [--description <text>] [--profile team|solo] [-y]
+harness configure sdd [--name <project>] [--description <text>] [--profile team|solo] [--apps name=path,...] [-y]
 ```
 
 | Argument        | Description                                                                       |
@@ -505,9 +505,12 @@ harness configure sdd [--name <project>] [--description <text>] [--profile team|
 | `--name`        | Project name — skips the prompt (defaults to `package.json` name or the directory) |
 | `--description` | Project description — skips the prompt                                             |
 | `--profile`     | Working profile written to `sdd/global.json`: `team` (full cycles, default) or `solo` (lite cycles) |
+| `--apps`        | Applications to register as `name=path` pairs, comma-separated (`--apps api=src/api,web=src/web`). Skips detection. Paths are relative to the repo root and must exist |
 | `-y`, `--yes`   | Skip the reset confirmation. **Destructive** when `sdd/` already exists            |
 
-- **Shape detection**: Nx monorepo (`nx.json`/`apps/`) → registers every app in `apps/`; otherwise the repo registers as a single logical app (standalone convention). App types are inferred from stack markers (`pom.xml`, `nest-cli.json`, `vite.config.ts`, ...)
+- **Shape detection**: Nx monorepo (`nx.json`/`apps/`) → registers every app in `apps/` **plus** every `project.json` with `projectType: "application"` found elsewhere (`src/<name>`, `packages/<name>`...; `node_modules`, build outputs and `sdd/` are skipped, and a nested workspace is not descended into). Otherwise the repo registers as a single logical app (standalone convention). App types are inferred from stack markers (`pom.xml`, `nest-cli.json`, `vite.config.ts`, ...)
+- **Names**: every registered app must satisfy what the registries and `add spec` require, `^[a-z][a-z0-9-]*$`. Discovery normalises the usual Nx names (`@acme/api` → `api`, `Api_Gateway` → `api-gateway`, `2fa` → `app-2fa`) and fails if two apps end up with the same id; `--apps` requires the name already valid and suggests the normalised form. `--apps` on a repo without `nx.json`/`apps/` registers a multi-app repo without writing `.nxignore` or labelling it Nx
+- **Apps outside `apps/`** keep the logical id `apps/<name>` in every SDD registry (the schemas require it, and `sdd:gate` only looks at `sdd/context/apps/<name>/`); `sdd/global.json` records where the code really lives (`src/api — springboot (código en src/api; id lógico apps/api)`) and the generated `constitution.md` opens with the same note. A monorepo where no application can be found **fails instead of installing an empty kit** — pass `--apps`
 - **Automatic `package.json` merge**: injects the `sdd:*` + `setup:agents` scripts and `ajv`/`ajv-formats` devDependencies without touching your existing scripts — and creates a minimal `package.json` if the repo has none (pure Java/Python repos)
 - **Absorbs your existing `AGENTS.md`/`CLAUDE.md`**: their content is preserved under an "Instrucciones previas del proyecto" section inside `sdd/dual-harness/` before the root files become symlinks — nothing is lost
 - **Keeps your existing `.claude/`, `.github/` and `.agents/` content**: real directories are not replaced — the kit agents/skills/prompts are linked inside them, and a name collision (say, your own `.github/skills/sdd-reviewer/`) keeps yours and leaves the kit version next to it as `<name>.new`, listed at the end of `setup:agents`

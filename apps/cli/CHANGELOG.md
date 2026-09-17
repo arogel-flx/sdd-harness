@@ -5,6 +5,58 @@ All notable changes to `@e-burgos/sdd-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`configure sdd` on Windows left the repo without `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` and
+  printed success.** `setup-agents.ps1` resolved the repo root one level too high (`sdd/`), so
+  every link landed inside `sdd/.claude`, `sdd/.github`… while the script ended in `done.`;
+  the CLI had already removed the absorbed root files. The script now goes up two levels like
+  the `.sh`, refuses to run when `sdd\agents` is not under the resolved root, and stops on the
+  first error (`$ErrorActionPreference = 'Stop'`) so the CLI sees a non-zero exit.
+- **The root instruction files can no longer disappear, on any platform.** `configure sdd` does
+  not delete them any more: after absorbing their text into `sdd/dual-harness/` it overwrites
+  them with the resulting kit content, and both installers recognise a root file identical to
+  the kit's as the kit's own copy and turn it into a link (instead of keeping it as "yours" with
+  a `.new` next to it forever). A failure anywhere between absorbing and linking — an invalid
+  `package.json`, an EPERM, the script itself — leaves the original file in place; a second
+  `configure sdd` no longer absorbs the kit's own copy back into itself. If linking still fails,
+  the CLI copies whatever is missing and says so.
+- **Windows: links are created the way Git creates them.** Relative symlinks via `mklink`
+  (no admin rights once Developer Mode is on — PowerShell 5.1's `New-Item -ItemType
+  SymbolicLink` always demands elevation, so that branch never ran and every file ended up a
+  hardlink), junction/hardlink as fallback. A link that already resolves to the kit is kept, so
+  re-running `setup:agents` on a checkout Git already wired leaves `git status` clean; the
+  `.sh` got the same "kept" behaviour. A degraded symlink (a 26-byte plain file holding the
+  target, from a `core.symlinks=false` checkout) is recognised as the kit's and replaced.
+- **Windows: `.gemini/settings.json` was rewritten with nothing but `context.fileName`.**
+  `ConvertFrom-Json -AsHashtable` does not exist in PowerShell 5.1; the swallowed error left an
+  empty hashtable and the merge wrote it back. Recursive conversion instead — arrays survive as
+  arrays (`[]` stays `[]`, `["mcp"]` stays a list) — and an unparseable file is left untouched.
+- **`setup:agents` and `sdd:rtk` rewrote `.gemini/settings.json` on top of each other.**
+  PowerShell's `ConvertTo-Json` and Node's `JSON.stringify` format the same content differently,
+  so every other run reformatted the whole file: `git status` dirty after a no-op run, and a diff
+  nobody can review. `setup-agents` now leaves the file untouched when `context.fileName` already
+  lists `GEMINI.md` and `AGENTS.md`.
+- **Windows: `.gemini/settings.json` and the generated `.gemini/commands/*.toml` were written
+  with a BOM** (`Set-Content -Encoding UTF8` in PowerShell 5.1) and `setup-rtk.mjs` then read the
+  settings as invalid JSON, so the Gemini rtk hook was never added — silently, with
+  `.gemini/settings.json is not valid JSON` as the only trace. Both files are written as UTF-8
+  without BOM now, and `readJsonFile` tolerates a BOM left by an earlier run.
+- **Windows: links are removed without following them.** `Remove-Item -Recurse` on a directory
+  link follows it in 5.1; the reparse point is now deleted by its attributes, which also works on
+  dangling links. Relative targets are computed on path segments, not `System.Uri`, so `#` and
+  `%20` in a path no longer produce a broken link that reports success.
+
+### Added
+
+- **A Windows-only integration spec** (`sdd.generator.windows.spec.ts`) runs `configure sdd`
+  and `setup-agents.ps1` for real: settings shapes preserved, dangling links pruned, a kit copy
+  turned into a link with no `.new`, a second configure that does not grow `dual-harness`, a
+  path with `#` and a space, an invalid `package.json`, and — when the runner can create
+  symlinks — a re-run that leaves `git status` clean.
+
 ## [0.14.1] - 2026-09-10
 
 ### Added

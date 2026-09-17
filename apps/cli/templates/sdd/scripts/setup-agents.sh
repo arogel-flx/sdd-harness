@@ -33,13 +33,31 @@ write_new() {
 
 # link_item TARGET REL_SOURCE ABS_SOURCE LABEL
 # symlink → refresh · missing → create · real file/dir → keep + .new
+# same_content A B — byte-equal ignoring line endings (a copy Git converted to CRLF still matches).
+same_content() {
+  [ -f "$1" ] && [ -f "$2" ] || return 1
+  cmp -s <(tr -d '\r' < "$1") <(tr -d '\r' < "$2")
+}
+
 link_item() {
   local target="$1" rel="$2" abs="$3" label="$4"
   if [ -L "$target" ]; then
-    ln -sfn "$rel" "$target"
-    echo "refreshed symlink : $label"
+    if [ "$(readlink "$target")" = "$rel" ]; then
+      echo "kept     symlink : $label (already points at the kit)"
+    else
+      ln -sfn "$rel" "$target"
+      echo "refreshed symlink : $label"
+    fi
   elif [ -e "$target" ]; then
-    write_new "$target" "$abs" "$label"
+    # A real file with the kit's exact content is the kit's own copy (`harness configure sdd`
+    # writes one while absorbing, and leaves one when linking failed): link it, don't keep it.
+    if same_content "$target" "$abs"; then
+      rm -f "$target"
+      ln -sfn "$rel" "$target"
+      echo "replaced copy    : $label (same content as the kit file)"
+    else
+      write_new "$target" "$abs" "$label"
+    fi
   else
     ln -sfn "$rel" "$target"
     echo "created  symlink : $label"
@@ -192,7 +210,8 @@ EOF
   echo "generated        : .gemini/commands/$stem.toml"
 done
 
-# .gemini/settings.json: make Gemini CLI also read AGENTS.md (merge, never clobber)
+# .gemini/settings.json: make Gemini CLI also read AGENTS.md (merge, never clobber, and do not
+# rewrite it when both names are already there — setup-rtk.mjs formats the same file its own way)
 if command -v node >/dev/null 2>&1; then
   node -e '
     const fs = require("fs");

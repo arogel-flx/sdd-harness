@@ -11,6 +11,19 @@ import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+/** CRLF -> LF for text content (a NUL byte in the first 8 KB means binary: untouched). */
+function normalizeEol(content) {
+  if (content.subarray(0, 8192).includes(0)) return content;
+  if (!content.includes(0x0d)) return content;
+  const out = Buffer.allocUnsafe(content.length);
+  let j = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === 0x0d && content[i + 1] === 0x0a) continue;
+    out[j++] = content[i];
+  }
+  return out.subarray(0, j);
+}
 const SDD = resolve(__dirname, '..');
 const REPO = resolve(SDD, '..');
 
@@ -693,7 +706,9 @@ if (globalJson) {
       for (const [rel, hash] of Object.entries(manifest.files ?? {})) {
         const abs = join(SDD, rel);
         if (!existsSync(abs)) continue;
-        const actual = createHash('sha256').update(readFileSync(abs)).digest('hex');
+        // Same rule as the CLI's kit-manifest: CRLF folded to LF for text files, so a Windows
+        // checkout with core.autocrlf=true still matches the hash the kit shipped.
+        const actual = createHash('sha256').update(normalizeEol(readFileSync(abs))).digest('hex');
         if (actual === hash) pristine.add(abs);
       }
     } catch {

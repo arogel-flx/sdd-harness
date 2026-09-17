@@ -9,37 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`configure sdd` on Windows left the repo without `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` and
-  printed success.** `setup-agents.ps1` resolved the repo root one level too high (`sdd/`), so
-  every link landed inside `sdd/.claude`, `sdd/.github`… while the script ended in `done.`;
-  the CLI had already removed the absorbed root files. The script now goes up two levels like
-  the `.sh`, refuses to run when `sdd\agents` is not under the resolved root, and stops on the
-  first error (`$ErrorActionPreference = 'Stop'`) so the CLI sees a non-zero exit.
-- **The root instruction files can no longer disappear, on any platform.** `configure sdd` does
-  not delete them any more: after absorbing their text into `sdd/dual-harness/` it overwrites
-  them with the resulting kit content, and both installers recognise a root file identical to
-  the kit's as the kit's own copy and turn it into a link (instead of keeping it as "yours" with
-  a `.new` next to it forever). A failure anywhere between absorbing and linking — an invalid
-  `package.json`, an EPERM, the script itself — leaves the original file in place; a second
-  `configure sdd` no longer absorbs the kit's own copy back into itself. If linking still fails,
-  the CLI copies whatever is missing and says so.
-- **Windows: links are created the way Git creates them.** Relative symlinks via `mklink`
-  (no admin rights once Developer Mode is on — PowerShell 5.1's `New-Item -ItemType
-  SymbolicLink` always demands elevation, so that branch never ran and every file ended up a
-  hardlink), junction/hardlink as fallback. A link that already resolves to the kit is kept, so
-  re-running `setup:agents` on a checkout Git already wired leaves `git status` clean; the
-  `.sh` got the same "kept" behaviour. A degraded symlink (a 26-byte plain file holding the
-  target, from a `core.symlinks=false` checkout) is recognised as the kit's and replaced.
-- **Windows: `.gemini/settings.json` was rewritten with nothing but `context.fileName`.**
-  `ConvertFrom-Json -AsHashtable` does not exist in PowerShell 5.1; the swallowed error left an
-  empty hashtable and the merge wrote it back. Recursive conversion instead — arrays survive as
-  arrays (`[]` stays `[]`, `["mcp"]` stays a list) — and an unparseable file is left untouched.
-- **Windows: links are removed without following them.** `Remove-Item -Recurse` on a directory
-  link follows it in 5.1; the reparse point is now deleted by its attributes, which also works on
-  dangling links. Relative targets are computed on path segments, not `System.Uri`, so `#` and
-  `%20` in a path no longer produce a broken link that reports success.
-
 ### Added
+
 
 - **A Windows-only integration spec** (`sdd.generator.windows.spec.ts`) runs `configure sdd`
   and `setup-agents.ps1` for real: settings shapes preserved, dangling links pruned, a kit copy
@@ -59,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `api-gateway`, `2fa` → `app-2fa`), two apps mapping to the same id is an error, and `--apps`
   requires the valid form (suggesting it otherwise). `--apps` on a repo without Nx registers a
   multi-app repo without `.nxignore` or `monorepo.tool: "Nx"`.
+
+- **CI runs on Windows too** (`.github/workflows/ci.yml`: `ubuntu-latest` + `windows-latest`,
+  build + typecheck + full suite on every PR). Until now nothing executed the kit on Windows.
+
 
 ## [0.14.1] - 2026-09-10
 

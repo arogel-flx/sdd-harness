@@ -84,8 +84,36 @@ export function isHybrid(relPath: string): boolean {
   return HYBRID_FILES.has(relPath);
 }
 
+/**
+ * CRLF folded to LF before hashing, for text files only (a NUL byte in the first 8 KB means
+ * binary and the bytes are hashed as they are). A checkout made with core.autocrlf=true — the
+ * Git for Windows default — hands us CRLF copies of files the kit shipped as LF; without this
+ * every one of them read as "modified by the user": `update sdd` dropped a `.new` next to
+ * files nobody touched and the validator's portability check lost its pristine set.
+ */
+export function normalizeEol(content: Buffer): Buffer {
+  if (content.subarray(0, 8192).includes(0)) return content;
+  if (!content.includes(0x0d)) return content;
+  const out = Buffer.allocUnsafe(content.length);
+  let j = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === 0x0d && content[i + 1] === 0x0a) continue;
+    out[j++] = content[i];
+  }
+  return out.subarray(0, j);
+}
+
+export function hashContent(content: Buffer): string {
+  return createHash('sha256').update(normalizeEol(content)).digest('hex');
+}
+
 export function hashFile(path: string): string {
-  return createHash('sha256').update(fs.readFileSync(path)).digest('hex');
+  return hashContent(fs.readFileSync(path));
+}
+
+/** Las claves del manifest son rutas posix: un kit.json escrito en Windows tiene que leerse igual en Linux. */
+export function toKitPath(rel: string): string {
+  return rel.split('\\').join('/');
 }
 
 async function listAllFiles(kitDir: string): Promise<string[]> {
@@ -94,7 +122,7 @@ async function listAllFiles(kitDir: string): Promise<string[]> {
     for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) await walk(full);
-      else out.push(relative(kitDir, full));
+      else out.push(toKitPath(relative(kitDir, full)));
     }
   };
   await walk(kitDir);
